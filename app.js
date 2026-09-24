@@ -8,7 +8,7 @@ const ERR = {
     NOT_ON: 'Bạn chưa bấm On Duty! Không thể thực hiện Off Duty.'
 };
 
-let employees = [], sessions = [], history = [];
+let employees = [], sessions = [], history = [], ranks = [];
 let realtimeChannel = null, currentPreset = 'today';
 let isAdmin = false, selectedImage = null, previewUrl = null;
 
@@ -44,6 +44,10 @@ function setupRealtime() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, async () => {
             await loadEmployees();
             if (isAdmin) renderAdminData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ranks' }, async () => {
+            await loadRanks();
+            if (isAdmin) { renderRanks(); renderAdminData(); }
         })
         .subscribe();
 }
@@ -89,7 +93,7 @@ async function adminLogout() {
 
 /* ---------- Employees ---------- */
 async function loadEmployees() {
-    const { data, error } = await sb.from('employees').select('id,name').order('name');
+    const { data, error } = await sb.from('employees').select('id,name,rank_id').order('name');
     if (error) return showToast('Lỗi', error.message, 'error');
     employees = data;
     const opts = employees.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
@@ -242,7 +246,8 @@ async function loadSessions() {
     sessions = data;
 }
 async function refreshAdmin() {
-    await Promise.all([loadEmployees(), loadSessions()]);
+    await Promise.all([loadEmployees(), loadSessions(), loadRanks()]);
+    renderRanks();
     renderAdminData();
 }
 function renderAdminData() {
@@ -251,19 +256,34 @@ function renderAdminData() {
     $('statTotalEmployees').textContent = employees.length;
     $('statActiveShifts').textContent = sessions.filter(s => s.status === 'ON').length;
     $('statCompletedShifts').textContent = sessions.filter(s => s.status === 'COMPLETED').length;
-    $('statTotalHours').textContent = formatDuration(sessions.reduce((a, s) => a + ms(s), 0));
+    const grossAllMs = sessions.reduce((a, s) => a + ms(s), 0);
+    const penaltyAllMs = sessions.reduce((a, s) => a + (s.penalty_seconds || 0) * 1000, 0);
+    $('statTotalHours').textContent = formatDuration(Math.max(0, grossAllMs - penaltyAllMs));
 
     $('employeeManagementTable').innerHTML = employees.length ? employees.map(e => {
         const mine = sessions.filter(s => s.employee_id === e.id), on = mine.some(s => s.status === 'ON');
+        const empGrossMs = mine.reduce((a, s) => a + ms(s), 0);
+        const empPenaltyMs = mine.reduce((a, s) => a + (s.penalty_seconds || 0) * 1000, 0);
+        const empNetMs = Math.max(0, empGrossMs - empPenaltyMs);
+        const empNetHours = empNetMs / 3600000;
+        const rank = ranks.find(r => r.id === e.rank_id);
+        const hourlyRate = rank ? rank.hourly_rate : 0;
+        const totalSalary = Math.round(empNetHours * hourlyRate);
+        const rankOpts = ranks.map(r => `<option value="${r.id}" ${r.id === e.rank_id ? 'selected' : ''}>${esc(r.name)}</option>`).join('');
         return `<tr class="hover:bg-slate-50 transition-colors">
             <td class="py-3 px-4 font-bold text-slate-800">${esc(e.name)}</td>
+            <td class="py-3 px-4"><select onchange="assignRank('${e.id}', this.value)" class="bg-slate-50 border border-slate-200 rounded-lg text-xs px-2 py-1.5 outline-none focus:ring-2 focus:ring-amber-500 min-w-[100px]"><option value="">— Chưa gán —</option>${rankOpts}</select></td>
+            <td class="py-3 px-4 text-center">${rank ? `<span class="px-2 py-0.5 text-xs font-semibold rounded-full" style="background:${rank.color}20;color:${rank.color}">${formatCurrency(hourlyRate)}/h</span>` : '<span class="text-slate-300 text-xs">—</span>'}</td>
             <td class="py-3 px-4"><span class="px-2.5 py-0.5 text-xs font-semibold rounded-full ${on ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${on ? 'Đang On Duty' : 'Nghỉ ca'}</span></td>
             <td class="py-3 px-4 text-center font-medium">${mine.length} lượt</td>
             <td class="py-3 px-4 text-center text-xs text-slate-500">${mine[0] ? formatDate(mine[0].on_time) : 'Chưa có'}</td>
-            <td class="py-3 px-4 text-right font-bold text-blue-600">${formatDuration(mine.reduce((a, s) => a + ms(s), 0))}</td>
+            <td class="py-3 px-4 text-right font-bold text-blue-600">${formatDuration(empGrossMs)}</td>
+            <td class="py-3 px-4 text-center font-bold text-rose-600">${empPenaltyMs > 0 ? '-' + formatDuration(empPenaltyMs) : '<span class="text-slate-300">—</span>'}</td>
+            <td class="py-3 px-4 text-right font-bold text-emerald-600">${formatDuration(empNetMs)}</td>
+            <td class="py-3 px-4 text-right font-bold text-amber-600">${rank ? formatCurrency(totalSalary) : '<span class="text-slate-300">—</span>'}</td>
             <td class="py-3 px-4 text-center"><button onclick="deleteEmployee('${e.id}')" class="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-semibold inline-flex items-center gap-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Xóa</button></td>
         </tr>`;
-    }).join('') : '<tr><td colspan="6" class="py-6 text-center text-xs text-slate-400">Chưa có nhân viên nào trong danh sách.</td></tr>';
+    }).join('') : '<tr><td colspan="11" class="py-6 text-center text-xs text-slate-400">Chưa có nhân viên nào trong danh sách.</td></tr>';
 
     // Filter with date range
     const fn = $('adminFilterName').value;
@@ -278,10 +298,11 @@ function renderAdminData() {
     // Update filtered summary
     const completedRows = rows.filter(s => s.status === 'COMPLETED');
     const totalFilteredMs = rows.reduce((a, s) => a + ms(s), 0);
+    const filteredPenaltyMs = rows.reduce((a, s) => a + (s.penalty_seconds || 0) * 1000, 0);
     $('filteredShifts').textContent = rows.length;
-    $('filteredHours').textContent = formatDuration(totalFilteredMs);
+    $('filteredHours').textContent = formatDuration(Math.max(0, totalFilteredMs - filteredPenaltyMs));
     $('filteredActive').textContent = rows.filter(s => s.status === 'ON').length;
-    $('filteredAvg').textContent = completedRows.length ? formatDuration(completedRows.reduce((a, s) => a + ms(s), 0) / completedRows.length) : '-';
+    $('filteredAvg').textContent = completedRows.length ? formatDuration(completedRows.reduce((a, s) => a + Math.max(0, ms(s) - (s.penalty_seconds || 0) * 1000), 0) / completedRows.length) : '-';
 
     const photoBtn = (s, kind, cls) => s[kind + '_photo_path'] ? `<button onclick="viewImage('${s.id}','${kind}')" class="px-2 py-1 ${cls} border rounded text-xs font-medium">Xem ảnh</button>` : '-';
     $('adminSessionsTable').innerHTML = rows.length ? rows.map(s => `<tr class="hover:bg-slate-50 transition-colors">
@@ -291,9 +312,10 @@ function renderAdminData() {
         <td class="py-3 px-3 text-xs text-slate-600">${s.off_time ? formatDateTime(s.off_time) : '<span class="text-amber-600 font-medium">Chưa Off Duty</span>'}</td>
         <td class="py-3 px-3">${photoBtn(s, 'off', 'bg-rose-50 border-rose-200 text-rose-600')}</td>
         <td class="py-3 px-3 text-center font-bold text-xs ${s.status === 'ON' ? 'text-amber-500' : 'text-slate-800'}">${s.status === 'ON' ? 'Đang chạy' : formatDuration(ms(s))}</td>
+        <td class="py-3 px-3 text-center">${s.penalty_seconds ? `<div><span class="text-rose-600 font-bold text-xs">-${formatDuration(s.penalty_seconds * 1000)}</span><p class="text-[10px] text-slate-400 mt-0.5 max-w-[120px] truncate" title="${esc(s.penalty_reason || '')}">${esc(s.penalty_reason || '')}</p></div>` : '<span class="text-slate-300 text-xs">—</span>'}</td>
         <td class="py-3 px-3 text-center"><span class="px-2 py-0.5 text-[10px] font-semibold rounded-full ${s.status === 'ON' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}">${s.status === 'ON' ? 'Đang diễn ra' : 'Đã hoàn thành'}</span></td>
-        <td class="py-3 px-3 text-right"><button onclick="deleteSession('${s.id}')" class="p-1.5 bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-600 rounded-lg" title="Xóa ca này"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td>
-    </tr>`).join('') : '<tr><td colspan="8" class="py-6 text-center text-xs text-slate-400">Không tìm thấy ca làm việc nào tương ứng.</td></tr>';
+        <td class="py-3 px-3 text-right whitespace-nowrap">${s.status === 'COMPLETED' ? `<button onclick="openPenaltyModal('${s.id}')" class="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-600 rounded-lg inline-block" title="Trừ giờ"><i data-lucide="timer-off" class="w-4 h-4"></i></button>` : ''}<button onclick="deleteSession('${s.id}')" class="p-1.5 bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-600 rounded-lg inline-block ml-1" title="Xóa ca này"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td>
+    </tr>`).join('') : '<tr><td colspan="9" class="py-6 text-center text-xs text-slate-400">Không tìm thấy ca làm việc nào tương ứng.</td></tr>';
     lucide.createIcons();
 }
 
@@ -389,16 +411,186 @@ async function viewImage(id, kind) {
 }
 function closeImageModal() { $('imageModal').classList.add('hidden'); }
 
+/* ---------- Penalty (Trừ giờ trực) ---------- */
+const PENALTY_PRESETS = ['AFK / Treo Duty', 'Rời vị trí không phép', 'Không phản hồi khi được gọi', 'Vi phạm nội quy'];
+function openPenaltyModal(sessionId) {
+    const s = sessions.find(x => x.id === sessionId);
+    if (!s) return;
+    $('penaltySessionId').value = sessionId;
+    $('penaltyEmployeeName').textContent = `${s.employee_name} — Ca: ${formatDateTime(s.on_time)}`;
+    $('penaltyHours').value = Math.floor((s.penalty_seconds || 0) / 3600);
+    $('penaltyMinutes').value = Math.floor(((s.penalty_seconds || 0) % 3600) / 60);
+    const existingReason = s.penalty_reason || '';
+    if (PENALTY_PRESETS.includes(existingReason)) {
+        $('penaltyReasonSelect').value = existingReason;
+        $('penaltyReasonCustom').classList.add('hidden');
+    } else if (existingReason) {
+        $('penaltyReasonSelect').value = 'custom';
+        $('penaltyReasonCustom').classList.remove('hidden');
+        $('penaltyReasonCustom').value = existingReason;
+    } else {
+        $('penaltyReasonSelect').value = 'AFK / Treo Duty';
+        $('penaltyReasonCustom').classList.add('hidden');
+    }
+    $('penaltyModal').classList.remove('hidden');
+    lucide.createIcons();
+}
+function closePenaltyModal() { $('penaltyModal').classList.add('hidden'); }
+function handlePenaltyReasonChange() {
+    const isCustom = $('penaltyReasonSelect').value === 'custom';
+    $('penaltyReasonCustom').classList.toggle('hidden', !isCustom);
+    if (isCustom) $('penaltyReasonCustom').focus();
+}
+async function submitPenalty() {
+    const sessionId = $('penaltySessionId').value;
+    const hours = parseInt($('penaltyHours').value) || 0;
+    const minutes = parseInt($('penaltyMinutes').value) || 0;
+    const totalSeconds = hours * 3600 + minutes * 60;
+    const reason = $('penaltyReasonSelect').value === 'custom'
+        ? $('penaltyReasonCustom').value.trim()
+        : $('penaltyReasonSelect').value;
+
+    if (totalSeconds < 0) return showToast('Lỗi', 'Thời gian trừ không được là số âm!', 'error');
+
+    const session = sessions.find(s => s.id === sessionId);
+
+    if (totalSeconds === 0) {
+        const { error } = await sb.from('duty_sessions').update({
+            penalty_seconds: 0,
+            penalty_reason: null,
+            penalty_by: null,
+            penalty_at: null
+        }).eq('id', sessionId);
+
+        if (error) return showToast('Lỗi', error.message, 'error');
+
+        closePenaltyModal();
+        await refreshAdmin();
+        const empName = session ? session.employee_name : '';
+        showToast('Đã hoàn tác', `Đã xóa/đặt giờ phạt về 0 cho ${empName}.`);
+        return;
+    }
+
+    if (!reason) return showToast('Lỗi', 'Vui lòng nhập lý do phạt!', 'error');
+
+    if (session && totalSeconds > session.duration_seconds) {
+        if (!confirm(`Thời gian trừ (${formatDuration(totalSeconds * 1000)}) lớn hơn thời lượng ca (${formatDuration(session.duration_seconds * 1000)}). Bạn có chắc chắn?`)) return;
+    }
+
+    const { error } = await sb.from('duty_sessions').update({
+        penalty_seconds: totalSeconds,
+        penalty_reason: reason,
+        penalty_by: 'admin',
+        penalty_at: new Date().toISOString()
+    }).eq('id', sessionId);
+
+    if (error) return showToast('Lỗi', error.message, 'error');
+
+    closePenaltyModal();
+    await refreshAdmin();
+    const empName = session ? session.employee_name : '';
+    showToast('Đã trừ giờ', `Trừ ${formatDuration(totalSeconds * 1000)} của ${empName}. Lý do: ${reason}`);
+}
+
+/* ---------- Ranks (Quản lý cấp bậc & lương) ---------- */
+async function loadRanks() {
+    const { data, error } = await sb.from('ranks').select('*').order('hourly_rate', { ascending: true });
+    if (error) return showToast('Lỗi', error.message, 'error');
+    ranks = data || [];
+}
+function renderRanks() {
+    const el = $('rankManagementTable');
+    if (!el) return;
+    el.innerHTML = ranks.length ? ranks.map(r => `<tr class="hover:bg-slate-50 transition-colors">
+        <td class="py-3 px-4"><div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full shrink-0" style="background:${esc(r.color)}"></span><span class="font-bold text-slate-800">${esc(r.name)}</span></div></td>
+        <td class="py-3 px-4 text-right font-bold text-amber-600">${formatCurrency(r.hourly_rate)}<span class="text-slate-400 font-normal text-xs"> /giờ</span></td>
+        <td class="py-3 px-4 text-center text-xs text-slate-500">${employees.filter(e => e.rank_id === r.id).length} NV</td>
+        <td class="py-3 px-4 text-right whitespace-nowrap">
+            <button onclick="openRankModal('${r.id}')" class="px-2 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg text-xs font-semibold inline-flex items-center gap-1"><i data-lucide="pencil" class="w-3.5 h-3.5"></i> Sửa</button>
+            <button onclick="deleteRank('${r.id}')" class="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs font-semibold inline-flex items-center gap-1 ml-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Xóa</button>
+        </td>
+    </tr>`).join('') : '<tr><td colspan="4" class="py-6 text-center text-xs text-slate-400">Chưa có rank nào. Bấm "Thêm Rank" để tạo mới.</td></tr>';
+    lucide.createIcons();
+}
+function openRankModal(rankId = null) {
+    const r = rankId ? ranks.find(x => x.id === rankId) : null;
+    $('rankModalTitle').textContent = r ? 'Chỉnh Sửa Rank' : 'Thêm Rank Mới';
+    $('rankModalId').value = rankId || '';
+    $('rankName').value = r ? r.name : '';
+    $('rankHourlyRate').value = r ? r.hourly_rate : '';
+    $('rankColor').value = r ? r.color : '#3b82f6';
+    $('rankModal').classList.remove('hidden');
+    lucide.createIcons();
+}
+function closeRankModal() { $('rankModal').classList.add('hidden'); }
+async function saveRank() {
+    const id = $('rankModalId').value;
+    const name = $('rankName').value.trim();
+    const hourly_rate = parseInt($('rankHourlyRate').value) || 0;
+    const color = $('rankColor').value;
+    if (!name) return showToast('Lỗi', 'Vui lòng nhập tên rank!', 'error');
+    if (hourly_rate < 0) return showToast('Lỗi', 'Lương/giờ không được âm!', 'error');
+    const payload = { name, hourly_rate, color };
+    let error;
+    if (id) {
+        ({ error } = await sb.from('ranks').update(payload).eq('id', id));
+    } else {
+        ({ error } = await sb.from('ranks').insert(payload));
+    }
+    if (error) return showToast('Lỗi', error.code === '23505' ? 'Tên rank đã tồn tại!' : error.message, 'error');
+    closeRankModal();
+    await loadRanks();
+    renderRanks();
+    renderAdminData();
+    showToast('Thành công', id ? `Đã cập nhật rank "${name}"` : `Đã tạo rank "${name}"`);
+}
+async function deleteRank(id) {
+    const r = ranks.find(x => x.id === id);
+    if (!r) return;
+    const usingCount = employees.filter(e => e.rank_id === id).length;
+    const msg = usingCount > 0
+        ? `Rank "${r.name}" đang được gán cho ${usingCount} nhân viên. Nếu xóa, các NV đó sẽ bị bỏ rank.\n\nBạn có chắc chắn xóa?`
+        : `Xác nhận xóa rank "${r.name}"?`;
+    if (!confirm(msg)) return;
+    const { error } = await sb.from('ranks').delete().eq('id', id);
+    if (error) return showToast('Lỗi', error.message, 'error');
+    await Promise.all([loadRanks(), loadEmployees()]);
+    renderRanks();
+    renderAdminData();
+    showToast('Đã xóa', `Đã xóa rank "${r.name}"`);
+}
+async function assignRank(employeeId, rankId) {
+    const { error } = await sb.from('employees').update({ rank_id: rankId || null }).eq('id', employeeId);
+    if (error) return showToast('Lỗi', error.message, 'error');
+    await loadEmployees();
+    renderAdminData();
+    const emp = employees.find(e => e.id === employeeId);
+    const rank = ranks.find(r => r.id === rankId);
+    showToast('Đã cập nhật', `${emp?.name || ''} → ${rank ? rank.name : 'Bỏ gán rank'}`);
+}
+
 function exportToExcel() {
     if (!sessions.length) return showToast('Cảnh báo', 'Không có dữ liệu ca làm việc để xuất!', 'error');
-    const data = sessions.map(s => ({
-        'Mã Ca': s.id,
-        'Tên Nhân Viên': s.employee_name,
-        'Thời Gian Bắt Đầu (On)': formatDateTime(s.on_time),
-        'Thời Gian Kết Thúc (Off)': s.off_time ? formatDateTime(s.off_time) : 'Chưa Off Duty',
-        'Thời Lượng Làm Việc': s.status === 'COMPLETED' ? formatDuration(s.duration_seconds * 1000) : 'Đang diễn ra',
-        'Trạng Thái': s.status === 'ON' ? 'Đang diễn ra' : 'Hoàn thành'
-    }));
+    const data = sessions.map(s => {
+        const emp = employees.find(e => e.id === s.employee_id);
+        const rank = emp ? ranks.find(r => r.id === emp.rank_id) : null;
+        const netSeconds = Math.max(0, (s.duration_seconds || 0) - (s.penalty_seconds || 0));
+        const salary = rank ? Math.round((netSeconds / 3600) * rank.hourly_rate) : 0;
+        return {
+            'Mã Ca': s.id,
+            'Tên Nhân Viên': s.employee_name,
+            'Rank': rank ? rank.name : 'Chưa gán',
+            'Lương/Giờ (VNĐ)': rank ? rank.hourly_rate : 0,
+            'Thời Gian Bắt Đầu (On)': formatDateTime(s.on_time),
+            'Thời Gian Kết Thúc (Off)': s.off_time ? formatDateTime(s.off_time) : 'Chưa Off Duty',
+            'Thời Lượng Làm Việc': s.status === 'COMPLETED' ? formatDuration(s.duration_seconds * 1000) : 'Đang diễn ra',
+            'Giờ Bị Trừ (Phạt)': s.penalty_seconds ? formatDuration(s.penalty_seconds * 1000) : '—',
+            'Lý Do Phạt': s.penalty_reason || '—',
+            'Giờ Thực Tế': s.status === 'COMPLETED' ? formatDuration(netSeconds * 1000) : 'Đang diễn ra',
+            'Lương Ca Này (VNĐ)': s.status === 'COMPLETED' ? salary : 'Đang diễn ra',
+            'Trạng Thái': s.status === 'ON' ? 'Đang diễn ra' : 'Hoàn thành'
+        };
+    });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'BaoCaoDuty');
     XLSX.writeFile(wb, `BaoCao_Duty_${localDate(new Date())}.xlsx`);
@@ -426,3 +618,4 @@ function formatDuration(ms) {
     const p = n => String(n).padStart(2, '0');
     return `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)}`;
 }
+const formatCurrency = n => new Intl.NumberFormat('vi-VN').format(n) + 'đ';
