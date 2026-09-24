@@ -251,7 +251,7 @@ function renderAdminData() {
     $('statTotalEmployees').textContent = employees.length;
     $('statActiveShifts').textContent = sessions.filter(s => s.status === 'ON').length;
     $('statCompletedShifts').textContent = sessions.filter(s => s.status === 'COMPLETED').length;
-    $('statTotalHours').textContent = (sessions.reduce((a, s) => a + ms(s), 0) / 3600000).toFixed(1) + 'h';
+    $('statTotalHours').textContent = formatDuration(sessions.reduce((a, s) => a + ms(s), 0));
 
     $('employeeManagementTable').innerHTML = employees.length ? employees.map(e => {
         const mine = sessions.filter(s => s.employee_id === e.id), on = mine.some(s => s.status === 'ON');
@@ -279,9 +279,9 @@ function renderAdminData() {
     const completedRows = rows.filter(s => s.status === 'COMPLETED');
     const totalFilteredMs = rows.reduce((a, s) => a + ms(s), 0);
     $('filteredShifts').textContent = rows.length;
-    $('filteredHours').textContent = (totalFilteredMs / 3600000).toFixed(1) + 'h';
+    $('filteredHours').textContent = formatDuration(totalFilteredMs);
     $('filteredActive').textContent = rows.filter(s => s.status === 'ON').length;
-    $('filteredAvg').textContent = completedRows.length ? (completedRows.reduce((a, s) => a + ms(s), 0) / completedRows.length / 3600000).toFixed(1) + 'h' : '-';
+    $('filteredAvg').textContent = completedRows.length ? formatDuration(completedRows.reduce((a, s) => a + ms(s), 0) / completedRows.length) : '-';
 
     const photoBtn = (s, kind, cls) => s[kind + '_photo_path'] ? `<button onclick="viewImage('${s.id}','${kind}')" class="px-2 py-1 ${cls} border rounded text-xs font-medium">Xem ảnh</button>` : '-';
     $('adminSessionsTable').innerHTML = rows.length ? rows.map(s => `<tr class="hover:bg-slate-50 transition-colors">
@@ -324,18 +324,17 @@ function setFilterPreset(preset) {
         case 'week': {
             const dow = today.getDay() || 7; // Monday=1
             const mon = new Date(y, m, d - dow + 1);
-            const sun = new Date(y, m, d - dow + 7);
             $('adminFilterDateFrom').value = fmt(mon);
-            $('adminFilterDateTo').value = fmt(sun);
+            $('adminFilterDateTo').value = fmt(today);
             break;
         }
         case 'month':
             $('adminFilterDateFrom').value = fmt(new Date(y, m, 1));
-            $('adminFilterDateTo').value = fmt(new Date(y, m + 1, 0));
+            $('adminFilterDateTo').value = fmt(today);
             break;
         case 'all':
             $('adminFilterDateFrom').value = '';
-            $('adminFilterDateTo').value = '';
+            $('adminFilterDateTo').value = fmt(today);
             break;
         case 'custom':
             // User manually set dates, just update UI
@@ -423,7 +422,7 @@ const formatDateTime = v => v ? `${new Date(v).toLocaleTimeString('vi-VN')} - ${
 const formatTime = v => v ? new Date(v).toLocaleTimeString('vi-VN') : '-';
 const formatDate = v => v ? new Date(v).toLocaleDateString('vi-VN') : '-';
 function formatDuration(ms) {
-    if (!ms || ms <= 0) return '00h 00m 00s';
+    if (!ms || ms <= 0) return '00:00:00';
     const p = n => String(n).padStart(2, '0');
-    return `${p(Math.floor(ms / 3600000))}h ${p(Math.floor(ms / 60000) % 60)}m ${p(Math.floor(ms / 1000) % 60)}s`;
+    return `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms / 60000) % 60)}:${p(Math.floor(ms / 1000) % 60)}`;
 }
