@@ -494,15 +494,23 @@ async function submitPenalty() {
 
 /* ---------- Ranks (Quản lý cấp bậc & lương) ---------- */
 async function loadRanks() {
-    const { data, error } = await sb.from('ranks').select('*').order('hourly_rate', { ascending: true });
+    const { data, error } = await sb.from('ranks').select('*');
     if (error) return showToast('Lỗi', error.message, 'error');
-    ranks = data || [];
+    const savedOrder = JSON.parse(localStorage.getItem('dt_rank_order') || '[]');
+    ranks = (data || []).sort((a, b) => {
+        let ia = savedOrder.indexOf(a.id);
+        let ib = savedOrder.indexOf(b.id);
+        if (ia === -1) ia = 999;
+        if (ib === -1) ib = 999;
+        if (ia !== ib) return ia - ib;
+        return a.hourly_rate - b.hourly_rate;
+    });
 }
 function renderRanks() {
     const el = $('rankManagementTable');
     if (!el) return;
-    el.innerHTML = ranks.length ? ranks.map(r => `<tr class="hover:bg-slate-50 transition-colors">
-        <td class="py-3 px-4"><div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full shrink-0" style="background:${esc(r.color)}"></span><span class="font-bold text-slate-800">${esc(r.name)}</span></div></td>
+    el.innerHTML = ranks.length ? ranks.map(r => `<tr class="hover:bg-slate-50 transition-colors bg-white cursor-move" data-id="${r.id}">
+        <td class="py-3 px-4"><div class="flex items-center gap-2"><i data-lucide="grip-vertical" class="w-4 h-4 text-slate-400 cursor-move"></i><span class="w-3 h-3 rounded-full shrink-0" style="background:${esc(r.color)}"></span><span class="font-bold text-slate-800">${esc(r.name)}</span></div></td>
         <td class="py-3 px-4 text-right font-bold text-amber-600">${formatCurrency(r.hourly_rate)}<span class="text-slate-400 font-normal text-xs"> /giờ</span></td>
         <td class="py-3 px-4 text-center text-xs text-slate-500">${employees.filter(e => e.rank_id === r.id).length} NV</td>
         <td class="py-3 px-4 text-right whitespace-nowrap">
@@ -511,6 +519,19 @@ function renderRanks() {
         </td>
     </tr>`).join('') : '<tr><td colspan="4" class="py-6 text-center text-xs text-slate-400">Chưa có rank nào. Bấm "Thêm Rank" để tạo mới.</td></tr>';
     lucide.createIcons();
+
+    if (window.Sortable && el) {
+        Sortable.create(el, {
+            animation: 150,
+            handle: '.cursor-move',
+            onEnd: function (evt) {
+                const newOrder = Array.from(el.querySelectorAll('tr[data-id]')).map(row => row.getAttribute('data-id'));
+                localStorage.setItem('dt_rank_order', JSON.stringify(newOrder));
+                ranks.sort((a, b) => newOrder.indexOf(a.id) - newOrder.indexOf(b.id));
+                renderAdminData(); // Cập nhật lại combo box ở bảng nhân viên
+            }
+        });
+    }
 }
 function openRankModal(rankId = null) {
     const r = rankId ? ranks.find(x => x.id === rankId) : null;
