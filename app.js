@@ -9,6 +9,7 @@ const ERR = {
 };
 
 let employees = [], sessions = [], history = [];
+let realtimeChannel = null, currentPreset = 'today';
 let isAdmin = false, selectedImage = null, previewUrl = null;
 
 const TAB = 'px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all duration-200 flex items-center space-x-1.5 ';
@@ -23,7 +24,29 @@ window.onload = async () => {
     const last = localStorage.getItem('dt_last_emp');
     if (employees.some(e => e.id === last)) $('employeeNameSelect').value = last;
     handleNameSelectChange();
+    setupRealtime();
+    setFilterPreset('today');
 };
+
+/* ---------- Realtime ---------- */
+function setupRealtime() {
+    if (realtimeChannel) sb.removeChannel(realtimeChannel);
+    realtimeChannel = sb.channel('duty-realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'duty_sessions' }, async () => {
+            await loadSessions();
+            if (isAdmin) renderAdminData();
+            const id = $('employeeNameSelect').value;
+            if (id) {
+                const { data } = await sb.rpc('get_employee_history', { p_employee_id: id });
+                if (data) { history = data; renderEmployeeOverview(); }
+            }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, async () => {
+            await loadEmployees();
+            if (isAdmin) renderAdminData();
+        })
+        .subscribe();
+}
 
 /* ---------- Clock ---------- */
 function startLiveClock() {
@@ -48,7 +71,7 @@ function switchView(view) {
 function showAdminUI() {
     $('adminLockScreen').classList.toggle('hidden', isAdmin);
     $('adminDashboard').classList.toggle('hidden', !isAdmin);
-    if (isAdmin) refreshAdmin();
+    if (isAdmin) { refreshAdmin(); setFilterPreset(currentPreset); }
 }
 async function verifyAdminPass() {
     const { error } = await sb.auth.signInWithPassword({ email: $('adminEmailInput').value.trim(), password: $('adminPassInput').value });
@@ -242,8 +265,24 @@ function renderAdminData() {
         </tr>`;
     }).join('') : '<tr><td colspan="6" class="py-6 text-center text-xs text-slate-400">Chưa có nhân viên nào trong danh sách.</td></tr>';
 
-    const fn = $('adminFilterName').value, fd = $('adminFilterDate').value;
-    const rows = sessions.filter(s => (fn === 'ALL' || s.employee_id === fn) && (!fd || localDate(s.on_time) === fd));
+    // Filter with date range
+    const fn = $('adminFilterName').value;
+    const df = $('adminFilterDateFrom').value, dt = $('adminFilterDateTo').value;
+    const rows = sessions.filter(s => {
+        if (fn !== 'ALL' && s.employee_id !== fn) return false;
+        if (df && localDate(s.on_time) < df) return false;
+        if (dt && localDate(s.on_time) > dt) return false;
+        return true;
+    });
+
+    // Update filtered summary
+    const completedRows = rows.filter(s => s.status === 'COMPLETED');
+    const totalFilteredMs = rows.reduce((a, s) => a + ms(s), 0);
+    $('filteredShifts').textContent = rows.length;
+    $('filteredHours').textContent = (totalFilteredMs / 3600000).toFixed(1) + 'h';
+    $('filteredActive').textContent = rows.filter(s => s.status === 'ON').length;
+    $('filteredAvg').textContent = completedRows.length ? (completedRows.reduce((a, s) => a + ms(s), 0) / completedRows.length / 3600000).toFixed(1) + 'h' : '-';
+
     const photoBtn = (s, kind, cls) => s[kind + '_photo_path'] ? `<button onclick="viewImage('${s.id}','${kind}')" class="px-2 py-1 ${cls} border rounded text-xs font-medium">Xem ảnh</button>` : '-';
     $('adminSessionsTable').innerHTML = rows.length ? rows.map(s => `<tr class="hover:bg-slate-50 transition-colors">
         <td class="py-3 px-3"><p class="font-bold text-slate-800 text-xs">${esc(s.employee_name)}</p><p class="text-[10px] text-slate-400 font-mono">${s.id.slice(0, 8)}</p></td>
@@ -257,9 +296,60 @@ function renderAdminData() {
     </tr>`).join('') : '<tr><td colspan="8" class="py-6 text-center text-xs text-slate-400">Không tìm thấy ca làm việc nào tương ứng.</td></tr>';
     lucide.createIcons();
 }
-function clearAdminFilters() {
-    $('adminFilterName').value = 'ALL'; $('adminFilterDate').value = '';
+
+/* ---------- Filter presets ---------- */
+function setFilterPreset(preset) {
+    currentPreset = preset;
+    const today = new Date(), y = today.getFullYear(), m = today.getMonth(), d = today.getDate();
+    const fmt = dt => dt.toLocaleDateString('en-CA'); // YYYY-MM-DD
+    const presets = ['today', 'yesterday', 'week', 'month', 'all'];
+    const PRESET_ON = 'px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-all bg-white text-blue-600 shadow-sm';
+    const PRESET_OFF = 'px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-all text-slate-500 hover:text-slate-700';
+    presets.forEach(p => {
+        const el = $('preset' + p.charAt(0).toUpperCase() + p.slice(1));
+        if (el) el.className = (preset === p) ? PRESET_ON : PRESET_OFF;
+    });
+
+    switch (preset) {
+        case 'today':
+            $('adminFilterDateFrom').value = fmt(today);
+            $('adminFilterDateTo').value = fmt(today);
+            break;
+        case 'yesterday': {
+            const yd = new Date(y, m, d - 1);
+            $('adminFilterDateFrom').value = fmt(yd);
+            $('adminFilterDateTo').value = fmt(yd);
+            break;
+        }
+        case 'week': {
+            const dow = today.getDay() || 7; // Monday=1
+            const mon = new Date(y, m, d - dow + 1);
+            const sun = new Date(y, m, d - dow + 7);
+            $('adminFilterDateFrom').value = fmt(mon);
+            $('adminFilterDateTo').value = fmt(sun);
+            break;
+        }
+        case 'month':
+            $('adminFilterDateFrom').value = fmt(new Date(y, m, 1));
+            $('adminFilterDateTo').value = fmt(new Date(y, m + 1, 0));
+            break;
+        case 'all':
+            $('adminFilterDateFrom').value = '';
+            $('adminFilterDateTo').value = '';
+            break;
+        case 'custom':
+            // User manually set dates, just update UI
+            presets.forEach(p => {
+                const el = $('preset' + p.charAt(0).toUpperCase() + p.slice(1));
+                if (el) el.className = PRESET_OFF;
+            });
+            break;
+    }
     renderAdminData();
+}
+function clearAdminFilters() {
+    $('adminFilterName').value = 'ALL';
+    setFilterPreset('today');
 }
 const removePhotos = ss => {
     const p = ss.flatMap(s => [s.on_photo_path, s.off_photo_path]).filter(Boolean);

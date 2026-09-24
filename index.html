@@ -304,32 +304,74 @@
 
                 <!-- Nhật ký ca trực -->
                 <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div class="p-5 border-b border-slate-200 flex flex-col lg:flex-row justify-between lg:items-center gap-3 bg-slate-50/50">
-                        <div>
-                            <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-                                <i data-lucide="list-checks" class="w-5 h-5 text-blue-600"></i> Nhật Ký Ca Trực
-                                <button onclick="adminLogout()" class="ml-2 px-2 py-0.5 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg">Đăng xuất</button>
-                            </h3>
-                            <p class="text-xs text-slate-500">Lọc theo nhân viên hoặc ngày, xem ảnh và xuất Excel</p>
+                    <div class="p-5 border-b border-slate-200 bg-slate-50/50 space-y-4">
+                        <div class="flex flex-col lg:flex-row justify-between lg:items-center gap-3">
+                            <div>
+                                <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                                    <i data-lucide="list-checks" class="w-5 h-5 text-blue-600"></i> Nhật Ký Ca Trực
+                                    <span id="realtimeBadge" class="ml-1 px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1">
+                                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Realtime
+                                    </span>
+                                    <button onclick="adminLogout()" class="ml-2 px-2 py-0.5 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg">Đăng xuất</button>
+                                </h3>
+                                <p class="text-xs text-slate-500">Dữ liệu tự động cập nhật khi có thay đổi • Lọc theo nhân viên, khoảng thời gian</p>
+                            </div>
+
+                            <div class="flex flex-wrap gap-2 items-center">
+                                <!-- Filter Name -->
+                                <select id="adminFilterName" onchange="renderAdminData()" class="bg-white border border-slate-300 rounded-xl text-xs px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="ALL">Tất cả nhân viên</option>
+                                </select>
+
+                                <!-- Export Button -->
+                                <button onclick="exportToExcel()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors">
+                                    <i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Xuất Excel
+                                </button>
+                            </div>
                         </div>
 
+                        <!-- Advanced Filters -->
                         <div class="flex flex-wrap gap-2 items-center">
-                            <!-- Filter Name -->
-                            <select id="adminFilterName" onchange="renderAdminData()" class="bg-slate-50 border border-slate-300 rounded-xl text-xs px-3 py-2 outline-none">
-                                <option value="ALL">Tất cả nhân viên</option>
-                            </select>
+                            <!-- Quick Presets -->
+                            <div class="flex bg-slate-100 p-0.5 rounded-lg">
+                                <button onclick="setFilterPreset('today')" id="presetToday" class="px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-all bg-white text-blue-600 shadow-sm">Hôm nay</button>
+                                <button onclick="setFilterPreset('yesterday')" id="presetYesterday" class="px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-all text-slate-500 hover:text-slate-700">Hôm qua</button>
+                                <button onclick="setFilterPreset('week')" id="presetWeek" class="px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-all text-slate-500 hover:text-slate-700">Tuần này</button>
+                                <button onclick="setFilterPreset('month')" id="presetMonth" class="px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-all text-slate-500 hover:text-slate-700">Tháng này</button>
+                                <button onclick="setFilterPreset('all')" id="presetAll" class="px-2.5 py-1.5 text-[11px] font-semibold rounded-md transition-all text-slate-500 hover:text-slate-700">Tất cả</button>
+                            </div>
 
-                            <!-- Filter Date -->
-                            <input type="date" id="adminFilterDate" onchange="renderAdminData()" class="bg-slate-50 border border-slate-300 rounded-xl text-xs px-3 py-2 outline-none">
+                            <!-- Date Range -->
+                            <div class="flex items-center gap-1.5 text-xs">
+                                <span class="text-slate-500 font-medium">Từ</span>
+                                <input type="date" id="adminFilterDateFrom" onchange="setFilterPreset('custom')" class="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500">
+                                <span class="text-slate-500 font-medium">đến</span>
+                                <input type="date" id="adminFilterDateTo" onchange="setFilterPreset('custom')" class="bg-white border border-slate-300 rounded-lg text-xs px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
 
-                            <button onclick="clearAdminFilters()" class="px-2.5 py-2 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-medium transition-colors" title="Xóa bộ lọc">
-                                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                            <button onclick="clearAdminFilters()" class="px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg font-medium transition-colors flex items-center gap-1" title="Xóa bộ lọc">
+                                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Xóa lọc
                             </button>
+                        </div>
 
-                            <!-- Export Button -->
-                            <button onclick="exportToExcel()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors">
-                                <i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Xuất Excel
-                            </button>
+                        <!-- Period Summary Bar -->
+                        <div id="filterSummaryBar" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div class="bg-white rounded-xl p-3 border border-slate-200">
+                                <p class="text-[10px] text-slate-500 font-medium uppercase">Số ca lọc được</p>
+                                <p id="filteredShifts" class="text-lg font-bold text-slate-800 mt-0.5">0</p>
+                            </div>
+                            <div class="bg-white rounded-xl p-3 border border-slate-200">
+                                <p class="text-[10px] text-slate-500 font-medium uppercase">Tổng giờ (lọc)</p>
+                                <p id="filteredHours" class="text-lg font-bold text-blue-600 mt-0.5">0h</p>
+                            </div>
+                            <div class="bg-white rounded-xl p-3 border border-slate-200">
+                                <p class="text-[10px] text-slate-500 font-medium uppercase">Ca đang chạy</p>
+                                <p id="filteredActive" class="text-lg font-bold text-emerald-600 mt-0.5">0</p>
+                            </div>
+                            <div class="bg-white rounded-xl p-3 border border-slate-200">
+                                <p class="text-[10px] text-slate-500 font-medium uppercase">TB giờ/ca</p>
+                                <p id="filteredAvg" class="text-lg font-bold text-amber-600 mt-0.5">0h</p>
+                            </div>
                         </div>
                     </div>
 
