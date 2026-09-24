@@ -9,12 +9,10 @@ const ERR = {
 };
 
 let employees = [], sessions = [], history = [];
-let isAdmin = false, selectedImage = null, previewUrl = null, mediaStream = null, mediaMode = 'camera';
+let isAdmin = false, selectedImage = null, previewUrl = null;
 
 const TAB = 'px-3 py-1.5 text-xs sm:text-sm font-medium rounded-lg transition-all duration-200 flex items-center space-x-1.5 ';
 const TAB_ON = TAB + 'bg-white text-blue-600 shadow-sm', TAB_OFF = TAB + 'text-slate-600 hover:text-slate-900';
-const MODE = 'flex-1 py-1.5 text-xs font-medium rounded-lg border flex justify-center items-center gap-1 ';
-const MODE_ON = MODE + 'border-blue-600 bg-blue-50 text-blue-600', MODE_OFF = MODE + 'border-slate-300 text-slate-600';
 
 window.onload = async () => {
     lucide.createIcons();
@@ -117,42 +115,14 @@ async function handleNameSelectChange() {
     renderEmployeeOverview();
 }
 
-/* ---------- Camera / ảnh (nén JPEG ≤1280px trước khi upload) ---------- */
-function switchMediaMode(mode) {
-    mediaMode = mode;
-    $('btnModeCam').className = mode === 'camera' ? MODE_ON : MODE_OFF;
-    $('btnModeUpload').className = mode === 'upload' ? MODE_ON : MODE_OFF;
-    $('cameraArea').classList.toggle('hidden', mode !== 'camera');
-    $('uploadArea').classList.toggle('hidden', mode !== 'upload');
-    if (mode === 'upload') stopCamera();
-}
-async function startCamera() {
-    try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-        $('webcam').srcObject = mediaStream;
-        $('camOverlay').classList.add('hidden');
-        $('btnCapture').classList.remove('hidden');
-    } catch {
-        showToast('Cảnh báo camera', 'Không thể kết nối máy ảnh. Vui lòng cấp quyền hoặc tải ảnh từ máy.', 'error');
-    }
-}
-function stopCamera() {
-    if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
-    mediaStream = null;
-    $('camOverlay').classList.remove('hidden');
-    $('btnCapture').classList.add('hidden');
-}
-async function toJpeg(src) { // src: File hoặc <video>
-    const img = src instanceof Blob ? await createImageBitmap(src) : src;
-    const w0 = img.videoWidth || img.width, h0 = img.videoHeight || img.height, k = Math.min(1, 1280 / w0);
+/* ---------- Ảnh (nén JPEG ≤1280px trước khi upload) ---------- */
+async function toJpeg(src) {
+    const img = await createImageBitmap(src);
+    const w0 = img.width, h0 = img.height, k = Math.min(1, 1280 / w0);
     const c = $('photoCanvas');
     c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     return new Promise(r => c.toBlob(r, 'image/jpeg', 0.75));
-}
-async function takeSnapshot() {
-    setImage(await toJpeg($('webcam')));
-    stopCamera();
 }
 async function handleFileUpload(e) {
     const f = e.target.files[0];
@@ -166,14 +136,13 @@ function setImage(blob) {
     previewUrl = URL.createObjectURL(blob);
     $('imagePreview').src = previewUrl;
     $('previewContainer').classList.remove('hidden');
-    $('cameraArea').classList.add('hidden');
     $('uploadArea').classList.add('hidden');
 }
 function resetImage() {
     selectedImage = null;
     $('previewContainer').classList.add('hidden');
     $('fileInput').value = '';
-    $(mediaMode === 'camera' ? 'cameraArea' : 'uploadArea').classList.remove('hidden');
+    $('uploadArea').classList.remove('hidden');
 }
 
 /* ---------- ON / OFF duty ---------- */
